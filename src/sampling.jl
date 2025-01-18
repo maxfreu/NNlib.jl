@@ -1,6 +1,6 @@
 # helper functions for the kernel preparation
-function grid_sample_validate_dimensions(input::AbstractArray{T, N}, grid, ndims) where {T,N}
-    dims = ndims - 2  # Subtract channels and batch dimensions
+function grid_sample_validate_dimensions(input::AbstractArray{T,N}, grid) where {T,N}
+    dims = N - 2  # Subtract channels and batch dimensions
     @assert size(grid, 1) == dims "Grid must have $dims coordinates as first dimension"
     @assert size(input, N) == size(grid, N) "Batch sizes must match"
 end
@@ -65,26 +65,23 @@ function grid_sample(input::AbstractArray{T,N},
     interpolation_mode=:linear,
     padding_mode=:zeros,
     align_corners=true) where {T<:AbstractFloat,N}
+    # if N == 3
+    #     workgroup = min(256, size(output, 1))
+    # elseif N == 4
+    #     workgroup = (16, 16)
+    # elseif N == 5
+    #     workgroup = (8, 8, 8)
+    # else
+    #     error("Unsupported dimension: $N")
+    # end
 
-    grid_sample_validate_dimensions(input, grid, N)
+    grid_sample_validate_dimensions(input, grid)
     output = grid_sample_allocate_output(input, grid)
 
     backend = get_backend(input)
+    ndrange = size(output)[1:N-2]
 
-    if N == 3  # 1D
-        workgroup = min(256, size(output, 1))
-        ndrange = size(output, 1)
-    elseif N == 4  # 2D
-        workgroup = (16, 16)  # 256 threads total in 16x16 blocks
-        ndrange = (size(output, 1), size(output, 2))
-    elseif N == 5  # 3D
-        workgroup = (8, 8, 8)  # 512 threads total in 8x8x8 blocks
-        ndrange = (size(output, 1), size(output, 2), size(output, 3))
-    else
-        error("Unsupported dimension: $N")
-    end
-
-    kernel! = grid_sample_kernel!(backend, workgroup)
+    kernel! = grid_sample_kernel!(backend)
     kernel!(output, input, grid,
         Val(Symbol(interpolation_mode)),
         Val(Symbol(padding_mode)),
@@ -102,24 +99,24 @@ function ∇grid_sample(
     grid::AbstractArray{<:AbstractFloat,N};
     interpolation_mode=:linear, padding_mode=:zeros, align_corners=true) where {T,N}
 
+    # if N == 3
+    #     workgroup = min(256, size(Δ, 1))
+    # elseif N == 4
+    #     workgroup = (16, 16)
+    # elseif N == 5
+    #     workgroup = (8, 8, 8)
+    # else
+    #     error("Unsupported dimension: $N")
+    # end
+    grid_sample_validate_dimensions(input, grid)
+
     backend = get_backend(input)
-    if N == 3
-        workgroup = min(256, size(Δ, 1))
-        ndrange = size(Δ, 1)
-    elseif N == 4
-        workgroup = (16, 16)  # 256 threads total in 16x16 blocks
-        ndrange = (size(Δ, 1), size(Δ, 2))
-    elseif N == 5
-        workgroup = (8, 8, 8)  # 512 threads total in 8x8x8 blocks
-        ndrange = (size(Δ, 1), size(Δ, 2), size(Δ, 3))
-    else
-        error("Unsupported dimension: $N")
-    end
+    ndrange = size(grid)[2:N-1]
 
     dx = zero(input)
     dgrid = similar(grid)
 
-    kernel! = ∇grid_sample_kernel!(backend, workgroup)
+    kernel! = ∇grid_sample_kernel!(backend)
     kernel!(dx, dgrid, Δ, input, grid,
         Val(Symbol(interpolation_mode)),
         Val(Symbol(padding_mode)),
@@ -251,7 +248,7 @@ end
     align_corners::Bool
 ) where {T,interpolation,padding}
 
-    @uniform iH, iW, channels, batch = size(input)
+    @uniform iW, iH, channels, batch = size(input)
     w, h = @index(Global, NTuple)
 
     @inbounds for n in 1:batch
@@ -271,18 +268,19 @@ end
             sw = (ix_ne - ix) * (iy - iy_ne)
             se = (ix - ix_nw) * (iy - iy_nw)
 
+
             for c in 1:channels
                 val = zero(T)
-                if in_bounds(iy_nw, ix_nw, iH, iW)
+                if in_bounds(ix_nw, iy_nw, iW, iH)
                     val += input[ix_nw, iy_nw, c, n] * nw
                 end
-                if in_bounds(iy_ne, ix_ne, iH, iW)
+                if in_bounds(ix_ne, iy_ne, iW, iH)
                     val += input[ix_ne, iy_ne, c, n] * ne
                 end
-                if in_bounds(iy_sw, ix_sw, iH, iW)
+                if in_bounds(ix_sw, iy_sw, iW, iH)
                     val += input[ix_sw, iy_sw, c, n] * sw
                 end
-                if in_bounds(iy_se, ix_se, iH, iW)
+                if in_bounds(ix_se, iy_se, iW, iH)
                     val += input[ix_se, iy_se, c, n] * se
                 end
                 output[w, h, c, n] = val
@@ -305,7 +303,7 @@ end
     align_corners::Bool
 ) where {T,interpolation,padding}
 
-    @uniform in_width, in_height, in_depth, channels, batch = size(input)  # Changed order to WHDCN
+    @uniform iW, iH, iD, channels, batch = size(input)  # Changed order to WHDCN
     w, h, d = @index(Global, NTuple{3,Int})
 
     @inbounds for n in 1:batch
@@ -313,9 +311,9 @@ end
         y = grid[2, w, h, d, n]  # height coordinate
         z = grid[3, w, h, d, n]  # depth coordinate
 
-        ix = compute_source_index(x, in_width, padding, align_corners)
-        iy = compute_source_index(y, in_height, padding, align_corners)
-        iz = compute_source_index(z, in_depth, padding, align_corners)
+        ix = compute_source_index(x, iW, padding, align_corners)
+        iy = compute_source_index(y, iH, padding, align_corners)
+        iz = compute_source_index(z, iD, padding, align_corners)
 
         if interpolation == :linear
             # Get the top-north-west corner
@@ -373,28 +371,28 @@ end
                 val = zero(T)
 
                 # Apply weights for all 8 corners
-                if in_bounds(ix_tnw, iy_tnw, iz_tnw, in_width, in_height, in_depth)
+                if in_bounds(ix_tnw, iy_tnw, iz_tnw, iW, iH, iD)
                     val += input[ix_tnw, iy_tnw, iz_tnw, c, n] * tnw
                 end
-                if in_bounds(ix_tne, iy_tne, iz_tne, in_width, in_height, in_depth)
+                if in_bounds(ix_tne, iy_tne, iz_tne, iW, iH, iD)
                     val += input[ix_tne, iy_tne, iz_tne, c, n] * tne
                 end
-                if in_bounds(ix_tsw, iy_tsw, iz_tsw, in_width, in_height, in_depth)
+                if in_bounds(ix_tsw, iy_tsw, iz_tsw, iW, iH, iD)
                     val += input[ix_tsw, iy_tsw, iz_tsw, c, n] * tsw
                 end
-                if in_bounds(ix_tse, iy_tse, iz_tse, in_width, in_height, in_depth)
+                if in_bounds(ix_tse, iy_tse, iz_tse, iW, iH, iD)
                     val += input[ix_tse, iy_tse, iz_tse, c, n] * tse
                 end
-                if in_bounds(ix_bnw, iy_bnw, iz_bnw, in_width, in_height, in_depth)
+                if in_bounds(ix_bnw, iy_bnw, iz_bnw, iW, iH, iD)
                     val += input[ix_bnw, iy_bnw, iz_bnw, c, n] * bnw
                 end
-                if in_bounds(ix_bne, iy_bne, iz_bne, in_width, in_height, in_depth)
+                if in_bounds(ix_bne, iy_bne, iz_bne, iW, iH, iD)
                     val += input[ix_bne, iy_bne, iz_bne, c, n] * bne
                 end
-                if in_bounds(ix_bsw, iy_bsw, iz_bsw, in_width, in_height, in_depth)
+                if in_bounds(ix_bsw, iy_bsw, iz_bsw, iW, iH, iD)
                     val += input[ix_bsw, iy_bsw, iz_bsw, c, n] * bsw
                 end
-                if in_bounds(ix_bse, iy_bse, iz_bse, in_width, in_height, in_depth)
+                if in_bounds(ix_bse, iy_bse, iz_bse, iW, iH, iD)
                     val += input[ix_bse, iy_bse, iz_bse, c, n] * bse
                 end
 
@@ -406,7 +404,7 @@ end
             iz_nearest = unsafe_trunc(Int, round(iz))
 
             for c in 1:channels
-                if in_bounds(ix_nearest, iy_nearest, iz_nearest, in_width, in_height, in_depth)
+                if in_bounds(ix_nearest, iy_nearest, iz_nearest, iW, iH, iD)
                     output[w, h, d, c, n] = input[ix_nearest, iy_nearest, iz_nearest, c, n]
                 else
                     output[w, h, d, c, n] = zero(T)
@@ -489,9 +487,9 @@ end
     align_corners::Bool
 ) where {T,interpolation,padding}
 
-    @uniform iH, iW, channels, batch = size(input)
+    @uniform iW, iH, channels, batch = size(input)
     w, h = @index(Global, NTuple)
-
+    
     @inbounds for n in 1:batch
         x = grid[1, w, h, n]
         y = grid[2, w, h, n]
