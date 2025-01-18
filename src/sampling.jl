@@ -523,20 +523,20 @@ end
                     giy -= nw_val * (ix_se - ix) * g_out
                 end
                 if in_bounds(iy_ne, ix_ne, iH, iW)
-                    Atomix.@atomic dx[ix_ne, iy_ne, c, n] += g_out * ne
-                    ne_val = input[ix_ne, iy_ne, c, n]
+                    Atomix.@atomic dx[iy_ne, ix_ne, c, n] += g_out * ne
+                    ne_val = input[iy_ne, ix_ne, c, n]
                     gix += ne_val * (iy_sw - iy) * g_out
                     giy -= ne_val * (ix - ix_sw) * g_out
                 end
                 if in_bounds(iy_sw, ix_sw, iH, iW)
-                    Atomix.@atomic dx[ix_sw, iy_sw, c, n] += g_out * sw
-                    sw_val = input[ix_sw, iy_sw, c, n]
+                    Atomix.@atomic dx[iy_sw, ix_sw, c, n] += g_out * sw
+                    sw_val = input[iy_sw, ix_sw, c, n]
                     gix -= sw_val * (iy - iy_ne) * g_out
                     giy += sw_val * (ix_ne - ix) * g_out
                 end
                 if in_bounds(iy_se, ix_se, iH, iW)
-                    Atomix.@atomic dx[ix_se, iy_se, c, n] += g_out * se
-                    se_val = input[ix_se, iy_se, c, n]
+                    Atomix.@atomic dx[iy_se, ix_se, c, n] += g_out * se
+                    se_val = input[iy_se, ix_se, c, n]
                     gix += se_val * (iy - iy_nw) * g_out
                     giy += se_val * (ix - ix_nw) * g_out
                 end
