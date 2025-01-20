@@ -268,7 +268,6 @@ end
             sw = (ix_ne - ix) * (iy - iy_ne)
             se = (ix - ix_nw) * (iy - iy_nw)
 
-
             for c in 1:channels
                 val = zero(T)
                 if in_bounds(ix_nw, iy_nw, iW, iH)
@@ -289,7 +288,7 @@ end
             ix_nearest = round(Int, ix)
             iy_nearest = round(Int, iy)
             for c in 1:channels
-                output[w, h, c, n] = in_bounds(iy_nearest, ix_nearest, iH, iW) ? input[ix_nearest, iy_nearest, c, n] : zero(T)
+                output[w, h, c, n] = in_bounds(ix_nearest, iy_nearest, iW, iH) ? input[ix_nearest, iy_nearest, c, n] : zero(T)
             end
         end
     end
@@ -513,28 +512,28 @@ end
 
             for c in 1:channels
                 g_out = Δ[w, h, c, n]
-
-                if in_bounds(iy_nw, ix_nw, iH, iW)
+                # Calculate dx and dgrid partials.
+                if in_bounds(ix_nw, iy_nw, iW, iH)
                     Atomix.@atomic dx[ix_nw, iy_nw, c, n] += g_out * nw
-                    nw_val = input[ix_nw, iy_nw, c, n]
+                    nw_val    = input[ix_nw, iy_nw, c, n]
                     gix -= nw_val * (iy_se - iy) * g_out
                     giy -= nw_val * (ix_se - ix) * g_out
                 end
-                if in_bounds(iy_ne, ix_ne, iH, iW)
-                    Atomix.@atomic dx[iy_ne, ix_ne, c, n] += g_out * ne
-                    ne_val = input[iy_ne, ix_ne, c, n]
+                if in_bounds(ix_ne, iy_ne, iW, iH)
+                    Atomix.@atomic dx[ix_ne, iy_ne, c, n] += g_out * ne
+                    ne_val    = input[ix_ne, iy_ne, c, n]
                     gix += ne_val * (iy_sw - iy) * g_out
                     giy -= ne_val * (ix - ix_sw) * g_out
                 end
-                if in_bounds(iy_sw, ix_sw, iH, iW)
-                    Atomix.@atomic dx[iy_sw, ix_sw, c, n] += g_out * sw
-                    sw_val = input[iy_sw, ix_sw, c, n]
+                if in_bounds(ix_sw, iy_sw, iW, iH)
+                    Atomix.@atomic dx[ix_sw, iy_sw, c, n] += g_out * sw
+                    sw_val    = input[ix_sw, iy_sw, c, n]
                     gix -= sw_val * (iy - iy_ne) * g_out
                     giy += sw_val * (ix_ne - ix) * g_out
                 end
-                if in_bounds(iy_se, ix_se, iH, iW)
-                    Atomix.@atomic dx[iy_se, ix_se, c, n] += g_out * se
-                    se_val = input[iy_se, ix_se, c, n]
+                if in_bounds(ix_se, iy_se, iW, iH)
+                    Atomix.@atomic dx[ix_se, iy_se, c, n] += g_out * se
+                    se_val    = input[ix_se, iy_se, c, n]
                     gix += se_val * (iy - iy_nw) * g_out
                     giy += se_val * (ix - ix_nw) * g_out
                 end
@@ -544,10 +543,10 @@ end
             dgrid[2, w, h, n] = giy_mult * giy
 
         elseif interpolation == :nearest
-            ix_nearest = round(Int, ix)
-            iy_nearest = round(Int, iy)
+            ix_nearest = unsafe_trunc(Int, round(ix))
+            iy_nearest = unsafe_trunc(Int, round(iy))
             for c in 1:channels
-                if in_bounds(iy_nearest, ix_nearest, iH, iW)
+                if in_bounds(ix_nearest, iy_nearest, iW, iH)
                     Atomix.@atomic dx[ix_nearest, iy_nearest, c, n] += Δ[w, h, c, n]
                 end
             end
@@ -568,13 +567,13 @@ end
     align_corners::Bool
 ) where {T,interpolation,padding}
 
-    @uniform iD, iH, iW, channels, batch = size(input)
-    d, h, w = @index(Global, NTuple{3,Int})
+    @uniform iW, iH, iD, channels, batch = size(input)
+    w, h, d = @index(Global, NTuple{3,Int})
 
     @inbounds for n in 1:batch
-        x = grid[1, d, h, w, n]
-        y = grid[2, d, h, w, n]
-        z = grid[3, d, h, w, n]
+        x = grid[1, w, h, d, n]
+        y = grid[2, w, h, d, n]
+        z = grid[3, w, h, d, n]
 
         ix, gix_mult = ∇compute_source_index(x, iW, padding, align_corners)
         iy, giy_mult = ∇compute_source_index(y, iH, padding, align_corners)
@@ -637,70 +636,70 @@ end
             giz = zero(T)
 
             for c in 1:channels
-                g_out = Δ[d, h, w, c, n]
+                g_out = Δ[w, h, d, c, n]
 
                 # Apply weights for all 8 corners
                 if in_bounds(ix_tnw, iy_tnw, iz_tnw, iW, iH, iD)
                     Atomix.@atomic dx[ix_tnw, iy_tnw, iz_tnw, c, n] += g_out * tnw
-                    tnw_val = input[ix_tnw, iy_tnw, iz_tnw, c, n]
+                    tnw_val   = input[ix_tnw, iy_tnw, iz_tnw, c, n]
                     gix -= tnw_val * (iy_bse - iy) * (iz_bse - iz) * g_out
                     giy -= tnw_val * (ix_bse - ix) * (iz_bse - iz) * g_out
                     giz -= tnw_val * (ix_bse - ix) * (iy_bse - iy) * g_out
                 end
                 if in_bounds(ix_tne, iy_tne, iz_tne, iW, iH, iD)
                     Atomix.@atomic dx[ix_tne, iy_tne, iz_tne, c, n] += g_out * tne
-                    tne_val = input[ix_tne, iy_tne, iz_tne, c, n]
+                    tne_val   = input[ix_tne, iy_tne, iz_tne, c, n]
                     gix += tne_val * (iy_bsw - iy) * (iz_bsw - iz) * g_out
                     giy -= tne_val * (ix - ix_bsw) * (iz_bsw - iz) * g_out
                     giz -= tne_val * (ix - ix_bsw) * (iy_bsw - iy) * g_out
                 end
                 if in_bounds(ix_tsw, iy_tsw, iz_tsw, iW, iH, iD)
                     Atomix.@atomic dx[ix_tsw, iy_tsw, iz_tsw, c, n] += g_out * tsw
-                    tsw_val = input[ix_tsw, iy_tsw, iz_tsw, c, n]
+                    tsw_val   = input[ix_tsw, iy_tsw, iz_tsw, c, n]
                     gix -= tsw_val * (iy - iy_bne) * (iz_bne - iz) * g_out
                     giy += tsw_val * (ix_bne - ix) * (iz_bne - iz) * g_out
                     giz -= tsw_val * (ix_bne - ix) * (iy - iy_bne) * g_out
                 end
                 if in_bounds(ix_tse, iy_tse, iz_tse, iW, iH, iD)
                     Atomix.@atomic dx[ix_tse, iy_tse, iz_tse, c, n] += g_out * tse
-                    tse_val = input[ix_tse, iy_tse, iz_tse, c, n]
+                    tse_val   = input[ix_tse, iy_tse, iz_tse, c, n]
                     gix += tse_val * (iy - iy_bnw) * (iz_bnw - iz) * g_out
                     giy += tse_val * (ix - ix_bnw) * (iz_bnw - iz) * g_out
                     giz -= tse_val * (ix - ix_bnw) * (iy - iy_bnw) * g_out
                 end
                 if in_bounds(ix_bnw, iy_bnw, iz_bnw, iW, iH, iD)
                     Atomix.@atomic dx[ix_bnw, iy_bnw, iz_bnw, c, n] += g_out * bnw
-                    bnw_val = input[ix_bnw, iy_bnw, iz_bnw, c, n]
+                    bnw_val   = input[ix_bnw, iy_bnw, iz_bnw, c, n]
                     gix -= bnw_val * (iy_tse - iy) * (iz - iz_tse) * g_out
                     giy -= bnw_val * (ix_tse - ix) * (iz - iz_tse) * g_out
                     giz += bnw_val * (ix_tse - ix) * (iy_tse - iy) * g_out
                 end
                 if in_bounds(ix_bne, iy_bne, iz_bne, iW, iH, iD)
                     Atomix.@atomic dx[ix_bne, iy_bne, iz_bne, c, n] += g_out * bne
-                    bne_val = input[ix_bne, iy_bne, iz_bne, c, n]
+                    bne_val   = input[ix_bne, iy_bne, iz_bne, c, n]
                     gix += bne_val * (iy - iy_tsw) * (iz - iz_tsw) * g_out
                     giy -= bne_val * (ix - ix_tsw) * (iz - iz_tsw) * g_out
                     giz += bne_val * (ix - ix_tsw) * (iy - iy_tsw) * g_out
                 end
                 if in_bounds(ix_bsw, iy_bsw, iz_bsw, iW, iH, iD)
                     Atomix.@atomic dx[ix_bsw, iy_bsw, iz_bsw, c, n] += g_out * bsw
-                    bsw_val = input[ix_bsw, iy_bsw, iz_bsw, c, n]
+                    bsw_val   = input[ix_bsw, iy_bsw, iz_bsw, c, n]
                     gix -= bsw_val * (iy - iy_tne) * (iz - iz_tne) * g_out
                     giy += bsw_val * (ix_tne - ix) * (iz - iz_tne) * g_out
                     giz += bsw_val * (ix_tne - ix) * (iy - iy_tne) * g_out
                 end
                 if in_bounds(ix_bse, iy_bse, iz_bse, iW, iH, iD)
                     Atomix.@atomic dx[ix_bse, iy_bse, iz_bse, c, n] += g_out * bse
-                    bse_val = input[ix_bse, iy_bse, iz_bse, c, n]
+                    bse_val   = input[ix_bse, iy_bse, iz_bse, c, n]
                     gix += bse_val * (iy - iy_tnw) * (iz - iz_tnw) * g_out
                     giy += bse_val * (ix - ix_tnw) * (iz - iz_tnw) * g_out
                     giz += bse_val * (ix - ix_tnw) * (iy - iy_tnw) * g_out
                 end
             end
 
-            dgrid[1, d, h, w, n] = gix_mult * gix
-            dgrid[2, d, h, w, n] = giy_mult * giy
-            dgrid[3, d, h, w, n] = giz_mult * giz
+            dgrid[1, w, h, d, n] = gix_mult * gix
+            dgrid[2, w, h, d, n] = giy_mult * giy
+            dgrid[3, w, h, d, n] = giz_mult * giz
 
         elseif interpolation == :nearest
             ix_nearest = round(Int, ix)
@@ -709,12 +708,12 @@ end
 
             for c in 1:channels
                 if in_bounds(ix_nearest, iy_nearest, iz_nearest, iW, iH, iD)
-                    Atomix.@atomic dx[ix_nearest, iy_nearest, iz_nearest, c, n] += Δ[d, h, w, c, n]
+                    Atomix.@atomic dx[ix_nearest, iy_nearest, iz_nearest, c, n] += Δ[w, h, d, c, n]
                 end
             end
-            dgrid[1, d, h, w, n] = 0
-            dgrid[2, d, h, w, n] = 0
-            dgrid[3, d, h, w, n] = 0
+            dgrid[1, w, h, d, n] = 0
+            dgrid[2, w, h, d, n] = 0
+            dgrid[3, w, h, d, n] = 0
         end
     end
 end
