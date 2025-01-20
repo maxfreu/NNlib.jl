@@ -65,15 +65,6 @@ function grid_sample(input::AbstractArray{T,N},
     interpolation_mode=:linear,
     padding_mode=:zeros,
     align_corners=true) where {T<:AbstractFloat,N}
-    # if N == 3
-    #     workgroup = min(256, size(output, 1))
-    # elseif N == 4
-    #     workgroup = (16, 16)
-    # elseif N == 5
-    #     workgroup = (8, 8, 8)
-    # else
-    #     error("Unsupported dimension: $N")
-    # end
 
     grid_sample_validate_dimensions(input, grid)
     output = grid_sample_allocate_output(input, grid)
@@ -98,24 +89,15 @@ function ∇grid_sample(
     input::AbstractArray{T,N},
     grid::AbstractArray{<:AbstractFloat,N};
     interpolation_mode=:linear, padding_mode=:zeros, align_corners=true) where {T,N}
-
-    # if N == 3
-    #     workgroup = min(256, size(Δ, 1))
-    # elseif N == 4
-    #     workgroup = (16, 16)
-    # elseif N == 5
-    #     workgroup = (8, 8, 8)
-    # else
-    #     error("Unsupported dimension: $N")
-    # end
+    
     grid_sample_validate_dimensions(input, grid)
-
-    backend = get_backend(input)
-    ndrange = size(grid)[2:N-1]
 
     dx = zero(input)
     dgrid = similar(grid)
 
+    backend = get_backend(input)
+    ndrange = size(grid)[2:N-1]
+    
     kernel! = ∇grid_sample_kernel!(backend)
     kernel!(dx, dgrid, Δ, input, grid,
         Val(Symbol(interpolation_mode)),
@@ -303,7 +285,7 @@ end
 ) where {T,interpolation,padding}
 
     @uniform iW, iH, iD, channels, batch = size(input)  # Changed order to WHDCN
-    w, h, d = @index(Global, NTuple{3,Int})
+    w, h, d = @index(Global, NTuple)
 
     @inbounds for n in 1:batch
         x = grid[1, w, h, d, n]  # width coordinate
@@ -568,8 +550,9 @@ end
 ) where {T,interpolation,padding}
 
     @uniform iW, iH, iD, channels, batch = size(input)
-    w, h, d = @index(Global, NTuple{3,Int})
+    w, h, d = @index(Global, NTuple)
 
+    # TODO: double check - there might be something wrong in the xz plane
     @inbounds for n in 1:batch
         x = grid[1, w, h, d, n]
         y = grid[2, w, h, d, n]
@@ -585,38 +568,31 @@ end
             iy_tnw = unsafe_trunc(Int, floor(iy))
             iz_tnw = unsafe_trunc(Int, floor(iz))
 
-            # Define all corners based on tnw
-            # top-north-east
+            # Define all corners based on top-north-east
             ix_tne = ix_tnw + 1
             iy_tne = iy_tnw
             iz_tne = iz_tnw
-
-            # top-south-west
+    
             ix_tsw = ix_tnw
             iy_tsw = iy_tnw + 1
             iz_tsw = iz_tnw
-
-            # top-south-east
+    
             ix_tse = ix_tnw + 1
             iy_tse = iy_tnw + 1
             iz_tse = iz_tnw
-
-            # bottom-north-west
+    
             ix_bnw = ix_tnw
             iy_bnw = iy_tnw
             iz_bnw = iz_tnw + 1
-
-            # bottom-north-east
+    
             ix_bne = ix_tnw + 1
             iy_bne = iy_tnw
             iz_bne = iz_tnw + 1
-
-            # bottom-south-west
+    
             ix_bsw = ix_tnw
             iy_bsw = iy_tnw + 1
             iz_bsw = iz_tnw + 1
-
-            # bottom-south-east
+    
             ix_bse = ix_tnw + 1
             iy_bse = iy_tnw + 1
             iz_bse = iz_tnw + 1
@@ -638,7 +614,6 @@ end
             for c in 1:channels
                 g_out = Δ[w, h, d, c, n]
 
-                # Apply weights for all 8 corners
                 if in_bounds(ix_tnw, iy_tnw, iz_tnw, iW, iH, iD)
                     Atomix.@atomic dx[ix_tnw, iy_tnw, iz_tnw, c, n] += g_out * tnw
                     tnw_val   = input[ix_tnw, iy_tnw, iz_tnw, c, n]
@@ -677,9 +652,9 @@ end
                 if in_bounds(ix_bne, iy_bne, iz_bne, iW, iH, iD)
                     Atomix.@atomic dx[ix_bne, iy_bne, iz_bne, c, n] += g_out * bne
                     bne_val   = input[ix_bne, iy_bne, iz_bne, c, n]
-                    gix += bne_val * (iy - iy_tsw) * (iz - iz_tsw) * g_out
+                    gix += bne_val * (iy_tsw - iy) * (iz - iz_tsw) * g_out
                     giy -= bne_val * (ix - ix_tsw) * (iz - iz_tsw) * g_out
-                    giz += bne_val * (ix - ix_tsw) * (iy - iy_tsw) * g_out
+                    giz += bne_val * (ix - ix_tsw) * (iy_tsw - iy) * g_out
                 end
                 if in_bounds(ix_bsw, iy_bsw, iz_bsw, iW, iH, iD)
                     Atomix.@atomic dx[ix_bsw, iy_bsw, iz_bsw, c, n] += g_out * bsw
